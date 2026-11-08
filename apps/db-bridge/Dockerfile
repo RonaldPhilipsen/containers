@@ -54,3 +54,12 @@ ENV PATH=/usr/local/bin
 USER 65532:65532
 
 ENTRYPOINT ["/usr/local/bin/db-bridge"]
+
+# OCI image labels. Keep this block last so that changed values only rebuild this step.
+ARG VERSION=devel
+LABEL \
+    org.opencontainers.image.title="db-bridge" \
+    org.opencontainers.image.description="spiffe-helper + mTLS Postgres bridge sidecar" \
+    org.opencontainers.image.url="https://github.com/RonaldPhilipsen/containers" \
+    org.opencontainers.image.source="https://github.com/RonaldPhilipsen/containers" \
+    org.opencontainers.image.version="${VERSION}"
