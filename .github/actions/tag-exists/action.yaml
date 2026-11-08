@@ -1,0 +1,61 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+name: Tag Exists
+description: >-
+  Return true or false if a tag exists for an image in GHCR.
+  Fails closed: any registry error other than "repository not found" fails the step.
+
+inputs:
+  image:
+    description: Image reference without tag (e.g. ghcr.io/owner/app)
+    required: true
+  tag:
+    description: Tag to look for
+    required: true
+  token:
+    description: Token for GHCR
+    required: true
+
+outputs:
+  exists:
+    description: Tag Exists
+    value: ${{ steps.check.outputs.exists }}
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure skopeo
+      shell: bash
+      run: |
+        command -v skopeo >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q skopeo; }
+
+    - name: Check Tag
+      id: check
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+        TOKEN: ${{ inputs.token }}
+        ACTOR: ${{ github.actor }}
+      run: |
+        set -euo pipefail
+        ERR="${RUNNER_TEMP}/skopeo-list-tags.err"
+        # Try with the token first; fall back to anonymous (works for public packages
+        # that this repository's token has not been granted access to).
+        if OUT=$(skopeo list-tags --creds "${ACTOR}:${TOKEN}" "docker://${IMAGE}" 2>"$ERR") \
+            || OUT=$(skopeo list-tags --no-creds "docker://${IMAGE}" 2>>"$ERR"); then
+            TAGS=$(jq --raw-output '.Tags[]' <<< "$OUT")
+        elif grep -qiE 'name unknown|repository name not known' "$ERR"; then
+            echo "Repository ${IMAGE} does not exist yet"
+            TAGS=""
+        else
+            cat "$ERR" >&2
+            echo "::error::Could not list tags for ${IMAGE}"
+            exit 1
+        fi
+        echo "Existing tags:"; echo "${TAGS:-<none>}"
+        if grep -qxF -- "$TAG" <<< "$TAGS"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+        else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+        fi

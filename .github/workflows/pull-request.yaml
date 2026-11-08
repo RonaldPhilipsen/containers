@@ -1,0 +1,97 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Pull Request
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changed:
+    name: Get Changed Apps
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    outputs:
+      apps: ${{ steps.apps.outputs.apps }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Get Apps
+        id: apps
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          APPS=$(git diff --name-only "$BASE"..."$HEAD" -- apps/ | cut -d/ -f2 | sort -u)
+          JSON=$(for a in $APPS; do [[ -d "apps/$a" ]] && echo "$a"; done | jq --raw-input --slurp --compact-output 'split("\n") | map(select(length > 0))')
+          echo "apps=${JSON}" >> "$GITHUB_OUTPUT"
+          echo "apps: ${JSON}"
+
+  build:
+    if: ${{ needs.changed.outputs.apps != '[]' }}
+    name: Build ${{ matrix.app }}
+    needs:
+      - changed
+    uses: ./.github/workflows/app-builder.yaml
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      matrix:
+        app: ${{ fromJSON(needs.changed.outputs.apps) }}
+      fail-fast: false
+    with:
+      app: ${{ matrix.app }}
+      release: false
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Shellcheck
+        run: find apps -name '*.sh' -print0 | xargs -0 --no-run-if-empty shellcheck
+
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          advanced-security: false
+          annotations: true
+
+  status:
+    if: ${{ !cancelled() }}
+    name: Build Success
+    needs:
+      - build
+      - changed
+      - lint
+    runs-on: ubuntu-26.04
+    permissions: {}
+    steps:
+      - name: Any jobs failed?
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+
+      - name: All jobs passed or skipped
+        if: ${{ !(contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+        run: echo "All jobs passed or skipped"

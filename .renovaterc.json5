@@ -1,0 +1,56 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    "docker:pinDigests",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommits",
+  ],
+  dependencyDashboard: true,
+  customManagers: [
+    {
+      customType: "regex",
+      description: "Process Annotations in Docker Bake",
+      managerFilePatterns: ["/(^|/)docker-bake\\.hcl$/"],
+      matchStrings: [
+        'datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\n.+ = "(?<currentValue>[^"]+)"',
+      ],
+      datasourceTemplate: "{{#if datasource}}{{{datasource}}}{{else}}github-releases{{/if}}",
+      versioningTemplate: "{{#if versioning}}{{{versioning}}}{{else}}semver{{/if}}",
+    },
+    {
+      customType: "regex",
+      description: "Process Annotations in Dockerfiles",
+      managerFilePatterns: ["/(^|/)Dockerfile$/"],
+      matchStrings: [
+        "datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\n.+(:\\s|=)(&\\S+\\s)?(?<currentValue>\\S+)",
+      ],
+      datasourceTemplate: "{{#if datasource}}{{{datasource}}}{{else}}github-releases{{/if}}",
+      versioningTemplate: "{{#if versioning}}{{{versioning}}}{{else}}semver{{/if}}",
+    },
+  ],
+  packageRules: [
+    {
+      description: ["Release Rules for App Updates"],
+      matchFileNames: ["apps/**"],
+      addLabels: ["app/{{parentDir}}"],
+      additionalBranchPrefix: "{{parentDir}}-",
+      commitMessageExtra: "( {{currentVersion}} → {{newVersion}} )",
+      commitMessageTopic: "{{depName}}",
+      semanticCommitScope: "{{parentDir}}",
+      semanticCommitType: "release",
+    },
+    {
+      description: ["Keep Debian base images on trixie"],
+      matchDatasources: ["docker"],
+      matchPackageNames: ["/debian/"],
+      allowedVersions: "/^trixie/",
+    },
+    {
+      description: ["Auto-merge GitHub Actions digest and minor/patch updates"],
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["digest", "minor", "patch"],
+      automerge: true,
+    },
+  ],
+}

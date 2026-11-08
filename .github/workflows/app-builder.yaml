@@ -1,0 +1,218 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: App Builder
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        type: string
+        description: App Name
+        required: true
+      no-cache:
+        type: boolean
+        description: No Cache
+        required: false
+        default: false
+      release:
+        type: boolean
+        description: Release
+        required: true
+
+concurrency:
+  group: ${{ inputs.release && format('app-builder-{0}', inputs.app) || format('app-builder-{0}-{1}', inputs.app, github.run_id) }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-26.04
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    env:
+      APP: ${{ inputs.app }}
+      REPO_OWNER: ${{ github.repository_owner }}
+    outputs:
+      published: ${{ steps.published.outputs.published }}
+      tag: ${{ steps.app-options.outputs.version }}
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Image Name
+        id: image
+        run: |
+          # GHCR refs must be lowercase; the owner login is not.
+          echo "name=ghcr.io/${REPO_OWNER,,}/${APP}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Get App Options
+        uses: ./.github/actions/app-options
+        id: app-options
+        with:
+          app: ${{ inputs.app }}
+
+      # Never overwrite a tag: if VERSION is already in GHCR, build and test only.
+      - name: Check Existing Tag
+        if: ${{ inputs.release }}
+        uses: ./.github/actions/tag-exists
+        id: tag-check
+        with:
+          image: ${{ steps.image.outputs.name }}
+          tag: ${{ steps.app-options.outputs.version }}
+          token: ${{ github.token }}
+
+      - name: Decide Release
+        id: decide
+        env:
+          RELEASE: ${{ inputs.release }}
+          EXISTS: ${{ steps.tag-check.outputs.exists }}
+          VERSION: ${{ steps.app-options.outputs.version }}
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          if [[ "$RELEASE" == "true" && "$EXISTS" == "true" ]]; then
+              echo "::warning::${IMAGE}:${VERSION} already exists; not pushing. Bump VERSION in apps/${APP}/docker-bake.hcl to release."
+              echo "push=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$RELEASE" == "true" ]]; then
+              echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "push=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build App Metadata
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest
+        with:
+          flavor: latest=false
+          images: |
+            ${{ steps.image.outputs.name }}
+          # One immutable version tag per release, no floating tags,
+          # so a release never moves an existing tag.
+          tags: |
+            type=raw,value=${{ steps.app-options.outputs.version }},enable=${{ steps.decide.outputs.push == 'true' }}
+            type=raw,value=sandbox,enable=${{ steps.decide.outputs.push != 'true' }}
+
+      - name: Build App (local)
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        with:
+          files: |
+            ./docker-bake.hcl
+            cwd://${{ steps.meta.outputs.bake-file }}
+          set: |
+            *.cache-from=type=gha,scope=${{ inputs.app }}
+            *.cache-to=type=gha,scope=${{ inputs.app }},mode=max
+            *.labels.org.opencontainers.image.title=${{ inputs.app }}
+            *.labels.org.opencontainers.image.version=${{ steps.app-options.outputs.version }}
+            *.labels.org.opencontainers.image.revision=${{ github.sha }}
+            *.no-cache=${{ inputs.no-cache }}
+            *.output=type=docker
+            *.platform=${{ steps.app-options.outputs.platforms }}
+            *.tags=${{ inputs.app }}:ci-test
+          source: ./apps/${{ inputs.app }}
+          targets: image
+
+      - name: Run App Tests
+        run: |
+          if [[ -x "apps/${APP}/test.sh" ]]; then
+              "apps/${APP}/test.sh" "${APP}:ci-test"
+          else
+              echo "::notice::apps/${APP}/test.sh not found; skipping tests"
+          fi
+
+      - name: Login to GitHub Container Registry
+        if: ${{ steps.decide.outputs.push == 'true' }}
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # Re-check right before the push to close the race with other publishers.
+      - name: Re-check Existing Tag
+        if: ${{ steps.decide.outputs.push == 'true' }}
+        uses: ./.github/actions/tag-exists
+        id: tag-recheck
+        with:
+          image: ${{ steps.image.outputs.name }}
+          tag: ${{ steps.app-options.outputs.version }}
+          token: ${{ github.token }}
+
+      - name: Abort If Tag Appeared
+        if: ${{ steps.decide.outputs.push == 'true' && steps.tag-recheck.outputs.exists != 'false' }}
+        run: |
+          echo "::error::Tag appeared in GHCR during the build; refusing to overwrite it."
+          exit 1
+
+      - name: Push App
+        if: ${{ steps.decide.outputs.push == 'true' }}
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        with:
+          files: |
+            ./docker-bake.hcl
+            cwd://${{ steps.meta.outputs.bake-file }}
+          set: |
+            *.cache-from=type=gha,scope=${{ inputs.app }}
+            *.labels.org.opencontainers.image.title=${{ inputs.app }}
+            *.labels.org.opencontainers.image.version=${{ steps.app-options.outputs.version }}
+            *.labels.org.opencontainers.image.revision=${{ github.sha }}
+            *.output=type=image,push=true
+            *.platform=${{ steps.app-options.outputs.platforms }}
+          source: ./apps/${{ inputs.app }}
+          targets: image
+
+      - name: Read Digest From Registry
+        if: ${{ steps.decide.outputs.push == 'true' }}
+        id: digest
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          VERSION: ${{ steps.app-options.outputs.version }}
+        run: |
+          DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{ json . }}' | jq --raw-output '.manifest.digest')
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad digest '$DIGEST'"; exit 1; }
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Check Anonymous Pull
+        if: ${{ steps.decide.outputs.push == 'true' }}
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          skopeo inspect --no-creds "docker://${IMAGE}@${DIGEST}" > /dev/null \
+              || echo "::warning::${IMAGE}@${DIGEST} is not pullable without credentials (package is private?)"
+
+      - name: Attestation
+        if: ${{ steps.decide.outputs.push == 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          push-to-registry: true
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+
+      - name: Summary
+        id: published
+        env:
+          PUSH: ${{ steps.decide.outputs.push }}
+          IMAGE: ${{ steps.image.outputs.name }}
+          VERSION: ${{ steps.app-options.outputs.version }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          echo "published=${PUSH}" >> "$GITHUB_OUTPUT"
+          if [[ "$PUSH" == "true" ]]; then
+              echo "Published \`${IMAGE}:${VERSION}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+              echo "Built and tested \`${APP}\` ${VERSION}; nothing pushed." >> "$GITHUB_STEP_SUMMARY"
+          fi
