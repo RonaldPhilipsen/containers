@@ -13,6 +13,7 @@
 # SVID carries the identity), so nothing app-specific is mounted.
 # DB_BRIDGE_UPSTREAM (host:port, default postgres-rw.database.svc:5432)
 # selects the CNPG rw service; its host is the TLS server name.
+# DB_BRIDGE_LISTEN (default 127.0.0.1:5432) is where the app connects.
 # Volumes expected in the pod:
 #   spiffe   : csi driver csi.spiffe.io -> /run/spiffe (agent socket)
 #   svid     : emptyDir                 -> /spiffe    (svid.crt/svid.key/bundle.crt)

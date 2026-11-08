@@ -37,6 +37,16 @@ import (
 // DB_BRIDGE_UPSTREAM, so one image serves every CNPG cluster.
 var upstream, upstreamHost string
 
+// listenAddr is where the app connects (plain Postgres). DB_BRIDGE_LISTEN
+// lets several bridges share a pod on different ports; the -health probe
+// reads the same variable, since exec probes inherit the container env.
+var listenAddr = func() string {
+	if v := os.Getenv("DB_BRIDGE_LISTEN"); v != "" {
+		return v
+	}
+	return defaultListen
+}()
+
 func initUpstream() {
 	upstream = os.Getenv("DB_BRIDGE_UPSTREAM")
 	if upstream == "" {
@@ -50,7 +60,8 @@ func initUpstream() {
 }
 
 const (
-	listenAddr = "127.0.0.1:5432"
+	// defaultListen is used when DB_BRIDGE_LISTEN is unset.
+	defaultListen = "127.0.0.1:5432"
 	// defaultUpstream is used when DB_BRIDGE_UPSTREAM is unset.
 	defaultUpstream = "postgres-rw.database.svc:5432"
 	svidCert        = "/spiffe/svid.crt"
