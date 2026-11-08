@@ -1,5 +1,9 @@
 // db-bridge: mTLS Postgres bridge.
 //
+// It is also the container entrypoint (PID 1 in a FROM scratch image): it
+// starts and supervises spiffe-helper, waits for the first SVID, then
+// serves.
+//
 // Listens on 127.0.0.1:5432 (plain TCP). For each app connection it opens
 // a connection to the upstream Postgres, performs the Postgres SSL
 // negotiation (SSLRequest / 'S'), upgrades that connection to TLS
@@ -22,8 +26,10 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 const (
@@ -32,6 +38,10 @@ const (
 	svidCert   = "/spiffe/svid.crt"
 	svidKey    = "/spiffe/svid.key"
 	caFile     = "/cnpg-ca/ca.crt"
+
+	helperBinary = "/usr/local/bin/spiffe-helper"
+	helperConfig = "/etc/spiffe-helper/helper.conf"
+	svidTimeout  = 60 * time.Second
 )
 
 func main() {
@@ -48,17 +58,35 @@ func main() {
 		return
 	}
 
+	// Register for signals before starting the child, so an early SIGTERM
+	// is not lost.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+
+	helper := startHelper()
+	if err := waitForSVID(sigs, helper); err != nil {
+		stopHelper(helper)
+		log.Fatalf("%v", err)
+	}
+
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
+		stopHelper(helper)
 		log.Fatalf("listen: %v", err)
 	}
 	log.Printf("db-bridge listening on %s -> %s", listenAddr, upstream)
 
 	go func() {
-		ch := make(chan os.Signal, 1)
-		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
-		<-ch
-		_ = ln.Close()
+		select {
+		case <-sigs:
+			// helper first: closing the listener ends main()
+			stopHelper(helper)
+			_ = ln.Close()
+		case err := <-helper.done:
+			// Without spiffe-helper the SVID is never renewed: exit, and
+			// let the kubelet restart the container.
+			log.Fatalf("spiffe-helper exited: %v", err)
+		}
 	}()
 
 	for {
@@ -69,6 +97,64 @@ func main() {
 		}
 		go handle(client)
 	}
+}
+
+// helperProc is the supervised spiffe-helper child. done receives its exit
+// status exactly once.
+type helperProc struct {
+	cmd  *exec.Cmd
+	done chan error
+}
+
+// startHelper runs spiffe-helper, which fetches the pod's SVID from the
+// SPIRE agent and renews it in /spiffe. The image is FROM scratch, so this
+// binary is PID 1 and takes the place of a shell entrypoint.
+func startHelper() *helperProc {
+	cmd := exec.Command(helperBinary, "-config", helperConfig)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("start spiffe-helper: %v", err)
+	}
+	h := &helperProc{cmd: cmd, done: make(chan error, 1)}
+	go func() { h.done <- cmd.Wait() }()
+	return h
+}
+
+func stopHelper(h *helperProc) {
+	_ = h.cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-h.done:
+	case <-time.After(5 * time.Second):
+		_ = h.cmd.Process.Kill()
+	}
+}
+
+// waitForSVID blocks until spiffe-helper has written a non-empty SVID and
+// key, for at most svidTimeout.
+func waitForSVID(sigs <-chan os.Signal, h *helperProc) error {
+	deadline := time.After(svidTimeout)
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		if nonEmpty(svidCert) && nonEmpty(svidKey) {
+			return nil
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			return fmt.Errorf("SVID never appeared in /spiffe after %s", svidTimeout)
+		case err := <-h.done:
+			return fmt.Errorf("spiffe-helper exited before the SVID appeared: %v", err)
+		case s := <-sigs:
+			return fmt.Errorf("received %v while waiting for the SVID", s)
+		}
+	}
+}
+
+func nonEmpty(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Size() > 0
 }
 
 // Postgres pre-startup request codes (sent by the client in an 8-byte

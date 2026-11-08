@@ -10,7 +10,7 @@ scaled down for a personal repository.
 
 | App | Image | Description |
 | --- | ----- | ----------- |
-| [db-bridge](apps/db-bridge) | `ghcr.io/ronaldphilipsen/db-bridge` | spiffe-helper (SPIFFE SVID fetch and rotation) plus a small Go mTLS Postgres bridge, on Debian trixie-slim |
+| [db-bridge](apps/db-bridge) | `ghcr.io/ronaldphilipsen/db-bridge` | spiffe-helper (SPIFFE SVID fetch and rotation) plus a small Go mTLS Postgres bridge, on `scratch` (no shell; db-bridge is PID 1 and supervises spiffe-helper) |
 
 ## Layout
 

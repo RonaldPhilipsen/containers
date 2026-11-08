@@ -2,7 +2,7 @@
 
 # db-bridge: SPIFFE-aware Postgres bridge sidecar.
 #
-# Runs spiffe-helper (fetches + rotates the pod's X.509 SVID from the SPIRE
+# db-bridge (PID 1) runs spiffe-helper (fetches + rotates the pod's X.509 SVID from the SPIRE
 # agent via the CSI-mounted Workload API socket) and the db-bridge binary
 # (a small mTLS Postgres bridge: plain TCP on loopback, SVID client cert to
 # CloudNativePG). One container so SVID rotation is absorbed in place — the
@@ -18,7 +18,7 @@
 FROM docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS build
 WORKDIR /src
 COPY bridge/ ./
-RUN CGO_ENABLED=0 go build -o /out/db-bridge .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/db-bridge .
 
 FROM docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS spiffe-helper
 # renovate: datasource=github-releases depName=spiffe/spiffe-helper
@@ -36,12 +36,18 @@ RUN \
     && tar -xzf /tmp/spiffe-helper.tar.gz -C /usr/local/bin spiffe-helper \
     && chmod 0755 /usr/local/bin/spiffe-helper
 
-FROM docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+# Final image: no shell, no libc, no package manager. Both binaries are
+# static Go builds, and db-bridge is PID 1 (it supervises spiffe-helper).
+FROM scratch
 
 COPY --from=spiffe-helper /usr/local/bin/spiffe-helper /usr/local/bin/spiffe-helper
 COPY --from=build /out/db-bridge /usr/local/bin/db-bridge
-COPY entrypoint.sh /entrypoint.sh
 COPY helper.conf /etc/spiffe-helper/helper.conf
-RUN chmod 0755 /entrypoint.sh
 
-ENTRYPOINT ["/entrypoint.sh"]
+# Explicit PATH: exec probes such as "db-bridge -health" resolve through it.
+ENV PATH=/usr/local/bin
+
+# Non-root by default; the pod's securityContext can override it.
+USER 65532:65532
+
+ENTRYPOINT ["/usr/local/bin/db-bridge"]
