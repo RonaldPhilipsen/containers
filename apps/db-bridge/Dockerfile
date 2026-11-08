@@ -11,6 +11,8 @@
 #
 # The bridge config is identical for every app (same CNPG rw upstream; the
 # SVID carries the identity), so nothing app-specific is mounted.
+# DB_BRIDGE_UPSTREAM (host:port, default postgres-rw.database.svc:5432)
+# selects the CNPG rw service; its host is the TLS server name.
 # Volumes expected in the pod:
 #   spiffe   : csi driver csi.spiffe.io -> /run/spiffe (agent socket)
 #   svid     : emptyDir                 -> /spiffe    (svid.crt/svid.key/bundle.crt)

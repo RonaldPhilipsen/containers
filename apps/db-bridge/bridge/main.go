@@ -32,12 +32,30 @@ import (
 	"time"
 )
 
+// upstream is the Postgres rw service (host:port). The host part is also
+// the TLS server name that the server certificate must match. Set by
+// DB_BRIDGE_UPSTREAM, so one image serves every CNPG cluster.
+var upstream, upstreamHost string
+
+func initUpstream() {
+	upstream = os.Getenv("DB_BRIDGE_UPSTREAM")
+	if upstream == "" {
+		upstream = defaultUpstream
+	}
+	host, _, err := net.SplitHostPort(upstream)
+	if err != nil || host == "" {
+		log.Fatalf("DB_BRIDGE_UPSTREAM %q: want host:port", upstream)
+	}
+	upstreamHost = host
+}
+
 const (
 	listenAddr = "127.0.0.1:5432"
-	upstream   = "postgres-rw.database.svc:5432"
-	svidCert   = "/spiffe/svid.crt"
-	svidKey    = "/spiffe/svid.key"
-	caFile     = "/cnpg-ca/ca.crt"
+	// defaultUpstream is used when DB_BRIDGE_UPSTREAM is unset.
+	defaultUpstream = "postgres-rw.database.svc:5432"
+	svidCert        = "/spiffe/svid.crt"
+	svidKey         = "/spiffe/svid.key"
+	caFile          = "/cnpg-ca/ca.crt"
 
 	helperBinary = "/usr/local/bin/spiffe-helper"
 	helperConfig = "/etc/spiffe-helper/helper.conf"
@@ -57,6 +75,8 @@ func main() {
 		_ = c.Close()
 		return
 	}
+
+	initUpstream()
 
 	// Register for signals before starting the child, so an early SIGTERM
 	// is not lost.
@@ -266,7 +286,7 @@ func tlsConfig() (*tls.Config, error) {
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      pool,
-		ServerName:   "postgres-rw.database.svc",
+		ServerName:   upstreamHost,
 		MinVersion:   tls.VersionTLS12,
 	}, nil
 }

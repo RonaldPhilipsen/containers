@@ -7,7 +7,7 @@ variable "APP" {
 // First-party app: VERSION is the image version, bumped by hand.
 // CI refuses to push a tag that already exists in GHCR.
 variable "VERSION" {
-  default = "1.2.0"
+  default = "1.3.0"
 }
 
 variable "SOURCE" {
