@@ -15,3 +15,12 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/omada-cert-sync .
 FROM gcr.io/distroless/static:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 COPY --from=build /out/omada-cert-sync /usr/local/bin/omada-cert-sync
 ENTRYPOINT ["/usr/local/bin/omada-cert-sync"]
+
+# OCI image labels. Keep this block last so that changed values only rebuild this step.
+ARG VERSION=devel
+LABEL \
+    org.opencontainers.image.title="omada-cert-sync" \
+    org.opencontainers.image.description="Pushes a mounted TLS certificate to an Omada controller" \
+    org.opencontainers.image.url="https://github.com/RonaldPhilipsen/containers" \
+    org.opencontainers.image.source="https://github.com/RonaldPhilipsen/containers" \
+    org.opencontainers.image.version="${VERSION}"
