@@ -78,5 +78,15 @@
       ],
       automerge: true,
     },
+    {
+      description: [
+        'Auto-merge all updates from my own packages',
+      ],
+      matchPackageNames: [
+        'ghcr.io/ronaldphilipsen/**',
+        'ronaldphilipsen/**',
+      ],
+      automerge: true,
+    },
   ],
 }
