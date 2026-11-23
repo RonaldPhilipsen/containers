@@ -25,10 +25,10 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/db-bridge .
 
 FROM docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS spiffe-helper
 # renovate: datasource=github-releases depName=spiffe/spiffe-helper
-ARG SPIFFE_HELPER_VERSION=v0.12.3
+ARG SPIFFE_HELPER_VERSION=v0.12.4
 # sha256 of spiffe-helper_${SPIFFE_HELPER_VERSION}_Linux-x86_64.tar.gz.
 # Update together with SPIFFE_HELPER_VERSION.
-ARG SPIFFE_HELPER_SHA256=b275a572d36ec02f5da995c11c736b3300ab5210af21f3deff1b5fc727cecd69
+ARG SPIFFE_HELPER_SHA256=51cf32dc28e604fbf88fe6d3b5719009d867d33f94a1bca68d3d7937afb0b4fe
 RUN \
     apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
