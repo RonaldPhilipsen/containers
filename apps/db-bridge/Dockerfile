@@ -23,7 +23,7 @@ WORKDIR /src
 COPY bridge/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/db-bridge .
 
-FROM docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS spiffe-helper
+FROM docker.io/library/debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0 AS spiffe-helper
 # renovate: datasource=github-releases depName=spiffe/spiffe-helper
 ARG SPIFFE_HELPER_VERSION=v0.12.4
 # sha256 of spiffe-helper_${SPIFFE_HELPER_VERSION}_Linux-x86_64.tar.gz.
