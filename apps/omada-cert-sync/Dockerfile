@@ -6,7 +6,7 @@
 # one, and uploads only when they differ.
 #
 # Environment: OMADA_URL, OMADA_USER, OMADA_PASS, optional TLS_DIR (default /tls).
-FROM docker.io/library/golang:1.27@sha256:3102e2c7eeee6e16de01ca3f35c56434696f70702a30b3d564b0244560981bb0 AS build
+FROM docker.io/library/golang:1.27@sha256:87f49b77a7b6a99ad7dc656be010ae453322459dd2ed902ac177649a302bc101 AS build
 WORKDIR /src
 COPY sync/ ./
 RUN go test ./...
